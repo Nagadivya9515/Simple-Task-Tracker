@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Simple Task Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
+    h2 { margin-top: 30px; }
+    .task-section, .note-section {
+      background: #fff;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    input, textarea, select, button {
+      margin-top: 5px;
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    button:focus, input:focus, textarea:focus, select:focus { outline: 2px solid #007acc; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 6px 0; }
+    .completed { text-decoration: line-through; }
+    .time, .date { font-size: 0.85rem; color: #666; }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      font-size: 0.75rem;
+      border-radius: 4px;
+      margin-left: 8px;
+      color: #fff;
+    }
+    .badge.work { background-color: #007acc; }
+    .badge.personal { background-color: #28a745; }
+    .badge.urgent { background-color: #dc3545; }
+    textarea { width: 90%; height: 100px; }
+    .note { background: #f9f9f9; padding: 10px; border-left: 4px solid #007acc; margin-top: 10px; }
+    .note time { font-size: 0.75rem; color: #888; display: block; }
+    .note-content { white-space: pre-wrap; line-height: 1.6; }
+    .note-content.collapsed { max-height: 60px; overflow: hidden; position: relative; }
+    .note-content.collapsed::after {
+      content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 20px;
+      background: linear-gradient(transparent, #f9f9f9);
+    }
+    .note-toggle { color: blue; cursor: pointer; display: inline-block; margin-top: 5px; }
+    .error { color: red; font-size: 0.8rem; margin-top: 5px; display: none; }
+  </style>
+</head>
+<body>
+  <h1>📋 Task Tracker</h1>
+
+  <div class="task-section" role="region" aria-label="Planned Tasks">
+    <h2>Planned Tasks</h2>
+    <input type="text" id="plannedInput" placeholder="Add planned task..." aria-label="New planned task" />
+    <select id="plannedCategory" aria-label="Task category">
+      <option value="work">Work</option>
+      <option value="personal">Personal</option>
+      <option value="urgent">Urgent</option>
+    </select>
+    <input type="date" id="plannedDate" aria-label="Task date" />
+    <input type="time" id="plannedTime" aria-label="Task time" />
+    <button onclick="addPlannedTask()" aria-label="Add planned task">Add</button>
+    <div id="plannedError" class="error"></div>
+    <ul id="plannedList" aria-label="Planned tasks list"></ul>
+    <button onclick="exportPlans()" aria-label="Export planned tasks">📤 Export Plans</button>
+  </div>
+
+  <div class="task-section" role="region" aria-label="Checklist Tasks">
+    <h2>Checklist Tasks</h2>
+    <input type="text" id="checklistInput" placeholder="Add checklist item..." aria-label="New checklist task" />
+    <input type="date" id="checklistDate" aria-label="Checklist task date" />
+    <button onclick="addChecklistTask()" aria-label="Add checklist task">Add</button>
+    <div id="checklistError" class="error"></div>
+    <ul id="checklistList" aria-label="Checklist tasks list"></ul>
+  </div>
+
+  <div class="task-section" role="region" aria-label="Timer Tasks">
+    <h2>Timer Tasks</h2>
+    <input type="text" id="timerInput" placeholder="Add timer task..." aria-label="New timer task" />
+    <input type="date" id="timerDate" aria-label="Timer task date" />
+    <button onclick="addTimerTask()" aria-label="Add timer task">Add</button>
+    <div id="timerError" class="error"></div>
+    <ul id="timerList" aria-label="Timer tasks list"></ul>
+  </div>
+
+  <div class="task-section" role="region" aria-label="Repeat Alarm Tasks">
+    <h2>Repeat Alarm Tasks</h2>
+    <input type="text" id="alarmInput" placeholder="E.g., Drink water" aria-label="New alarm task" />
+    <input type="number" id="alarmInterval" placeholder="Interval in mins" min="1" aria-label="Alarm interval in minutes" />
+    <button onclick="addAlarmTask()" aria-label="Set alarm task">Set Alarm</button>
+    <div id="alarmError" class="error"></div>
+    <ul id="alarmList" aria-label="Alarm tasks list"></ul>
+  </div>
+
+  <audio id="alarmSound" src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg" preload="auto"></audio>
+
+  <div class="note-section" role="region" aria-label="Notepad">
+    <h2>📝 Notepad</h2>
+    <textarea id="noteInput" placeholder="Write your note here... (use ** for bold text, * for italic)" aria-label="New note"></textarea><br>
+    <button onclick="addNote()" aria-label="Add note">Add Note</button>
+    <button id="undoMessage" style="display:none;" aria-label="Undo note deletion"></button>
+    <button onclick="exportNotes()" aria-label="Export notes">📤 Export Notes</button>
+    <div id="noteError" class="error"></div>
+    <ul id="noteList" aria-label="Notes list"></ul>
+  </div>
+
+  <script>
+    // State Management
+    let plannedTasks = JSON.parse(localStorage.getItem('plannedTasks')) || [];
+    let checklistTasks = JSON.parse(localStorage.getItem('checklistTasks')) || [];
+    let timerTasks = JSON.parse(localStorage.getItem('timerTasks')) || [];
+    let alarmTasks = JSON.parse(localStorage.getItem('alarmTasks')) || [];
+    let notes = JSON.parse(localStorage.getItem('notes')) || [];
+    const deletedNotesStack = [];
+
+    // Utility Functions
+    function getTodayDate() {
+      return new Date().toISOString().split("T")[0];
+    }
+
+    function getCurrentTime() {
+      const now = new Date();
+      return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    }
+
+    function showError(elementId, message) {
+      const errorDiv = document.getElementById(elementId);
+      errorDiv.textContent = message;
+      errorDiv.style.display = 'block';
+      setTimeout(() => { errorDiv.style.display = 'none'; }, 3000);
+    }
+
+    function deleteTask(taskArray, index, storageKey, renderFunction) {
+      taskArray.splice(index, 1);
+      localStorage.setItem(storageKey, JSON.stringify(taskArray));
+      renderFunction();
+    }
+
+    // Planned Tasks
+    function addPlannedTask() {
+      const input = document.getElementById('plannedInput');
+      const category = document.getElementById('plannedCategory').value;
+      const date = document.getElementById('plannedDate').value || getTodayDate();
+      const time = document.getElementById('plannedTime').value || getCurrentTime();
+      const name = input.value.trim();
+      if (!name) {
+        showError('plannedError', 'Task name is required.');
+        return;
+      }
+      plannedTasks.push({ name, time, date, category });
+      localStorage.setItem('plannedTasks', JSON.stringify(plannedTasks));
+      input.value = '';
+      renderPlannedTasks();
+    }
+
+    function renderPlannedTasks() {
+      const plannedList = document.getElementById('plannedList');
+      plannedList.innerHTML = '';
+      plannedTasks.forEach((task, index) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<strong>${task.name}</strong>
+                        <span class="badge ${task.category}">${task.category}</span>
+                        <div class="time">Time: ${task.time}</div>
+                        <div class="date">Date: ${task.date}</div>
+                        <button onclick="deleteTask(plannedTasks, ${index}, 'plannedTasks', renderPlannedTasks)" aria-label="Delete task">🗑️</button>`;
+        plannedList.appendChild(li);
+      });
+    }
+
+    // Checklist Tasks
+    function addChecklistTask() {
+      const input = document.getElementById('checklistInput');
+      const date = document.getElementById('checklistDate').value || getTodayDate();
+      const name = input.value.trim();
+      if (!name) {
+        showError('checklistError', 'Task name is required.');
+        return;
+      }
+      checklistTasks.push({ name, done: false, date });
+      localStorage.setItem('checklistTasks', JSON.stringify(checklistTasks));
+      input.value = '';
+      renderChecklistTasks();
+    }
+
+    function toggleChecklist(index) {
+      checklistTasks[index].done = !checklistTasks[index].done;
+      localStorage.setItem('checklistTasks', JSON.stringify(checklistTasks));
+      renderChecklistTasks();
+    }
+
+    function renderChecklistTasks() {
+      const list = document.getElementById('checklistList');
+      list.innerHTML = '';
+      checklistTasks.forEach((task, index) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<input type="checkbox" ${task.done ? 'checked' : ''} onchange="toggleChecklist(${index})" aria-label="Toggle task completion">
+                        <span class="${task.done ? 'completed' : ''}">${task.name}</span>
+                        <div class="date">Date: ${task.date}</div>
+                        <button onclick="deleteTask(checklistTasks, ${index}, 'checklistTasks', renderChecklistTasks)" aria-label="Delete task">🗑️</button>`;
+        list.appendChild(li);
+      });
+    }
+
+    // Timer Tasks
+    function addTimerTask() {
+      const input = document.getElementById('timerInput');
+      const date = document.getElementById('timerDate').value || getTodayDate();
+      const name = input.value.trim();
+      if (!name) {
+        showError('timerError', 'Task name is required.');
+        return;
+      }
+      timerTasks.push({ name, duration: 0, running: false, lastStartTime: null, date });
+      localStorage.setItem('timerTasks', JSON.stringify(timerTasks));
+      input.value = '';
+      renderTimerTasks();
+    }
+
+    function toggleTimer(index) {
+      const task = timerTasks[index];
+      const now = Date.now();
+      if (task.running) {
+        task.duration += Math.floor((now - task.lastStartTime) / 1000);
+        task.running = false;
+        task.lastStartTime = null;
+      } else {
+        task.running = true;
+        task.lastStartTime = now;
+      }
+      localStorage.setItem('timerTasks', JSON.stringify(timerTasks));
+      renderTimerTasks();
+    }
+
+    function formatDuration(seconds) {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}m ${secs}s`;
+    }
+
+    function renderTimerTasks() {
+      const list = document.getElementById('timerList');
+      list.innerHTML = '';
+      timerTasks.forEach((task, index) => {
+        let duration = task.duration;
+        if (task.running && task.lastStartTime) {
+          duration += Math.floor((Date.now() - task.lastStartTime) / 1000);
+        }
+        const li = document.createElement('li');
+        li.innerHTML = `<strong>${task.name}</strong>
+                        <div class="time">Time: ${formatDuration(duration)}</div>
+                        <div class="date">Date: ${task.date}</div>
+                        <button onclick="toggleTimer(${index})" aria-label="${task.running ? 'Stop timer' : 'Start timer'}">${task.running ? 'Stop' : 'Start'}</button>
+                        <button onclick="deleteTask(timerTasks, ${index}, 'timerTasks', renderTimerTasks)" aria-label="Delete task">🗑️</button>`;
+        list.appendChild(li);
+      });
+    }
+
+    // Alarm Tasks
+    function addAlarmTask() {
+      const name = document.getElementById('alarmInput').value.trim();
+      const interval = parseInt(document.getElementById('alarmInterval').value);
+      if (!name) {
+        showError('alarmError', 'Task name is required.');
+        return;
+      }
+      if (isNaN(interval) || interval <= 0) {
+        showError('alarmError', 'Interval must be a positive number.');
+        return;
+      }
+      alarmTasks.push({ name, interval, nextTime: Date.now() + interval * 60000 });
+      localStorage.setItem('alarmTasks', JSON.stringify(alarmTasks));
+      document.getElementById('alarmInput').value = '';
+      document.getElementById('alarmInterval').value = '';
+      renderAlarmTasks();
+    }
+
+    function renderAlarmTasks() {
+      const list = document.getElementById('alarmList');
+      list.innerHTML = '';
+      alarmTasks.forEach((task, index) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<strong>${task.name}</strong> (Every ${task.interval} mins)
+                        <button onclick="deleteTask(alarmTasks, ${index}, 'alarmTasks', renderAlarmTasks)" aria-label="Delete alarm">🗑️</button>
+                        <button onclick="snoozeAlarm(${index})" aria-label="Snooze alarm">Snooze</button>`;
+        list.appendChild(li);
+      });
+    }
+
+    function snoozeAlarm(index) {
+      alarmTasks[index].nextTime = Date.now() + 5 * 60000;
+      localStorage.setItem('alarmTasks', JSON.stringify(alarmTasks));
+    }
+
+    function checkAlarms() {
+      const now = Date.now();
+      const sound = document.getElementById('alarmSound');
+      alarmTasks.forEach(task => {
+        if (now >= task.nextTime) {
+          sound.play().catch(() => console.log('Audio playback failed'));
+          task.nextTime = now + task.interval * 60000;
+        }
+      });
+      localStorage.setItem('alarmTasks', JSON.stringify(alarmTasks));
+    }
+
+    // Notes
+    function formatNoteText(text) {
+      return text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/\.\./g, '•');
+    }
+
+    function addNote() {
+      const input = document.getElementById('noteInput');
+      const content = input.value.trim();
+      if (!content) {
+        showError('noteError', 'Note content is required.');
+        return;
+      }
+      const timestamp = new Date().toLocaleString();
+      notes.push({ content, timestamp, collapsed: true });
+      localStorage.setItem('notes', JSON.stringify(notes));
+      input.value = '';
+      renderNotes();
+    }
+
+    function toggleNote(index) {
+      notes[index].collapsed = !notes[index].collapsed;
+      localStorage.setItem('notes', JSON.stringify(notes));
+      renderNotes();
+    }
+
+    function renderNotes() {
+      const list = document.getElementById('noteList');
+      list.innerHTML = '';
+      notes.forEach((note, index) => {
+        const li = document.createElement('li');
+        li.className = 'note';
+        if (note.editing) {
+          li.innerHTML = `
+            <textarea id="editNote${index}" aria-label="Edit note">${note.content}</textarea>
+            <br>
+            <button onclick="saveNoteEdit(${index})" aria-label="Save note">💾 Save</button>
+            <button onclick="cancelNoteEdit(${index})" aria-label="Cancel edit">❌ Cancel</button>
+          `;
+        } else {
+          const contentLength = note.content.length;
+          const isLong = contentLength > 100;
+          li.innerHTML = `
+            <div class="note-content ${note.collapsed && isLong ? 'collapsed' : ''}">${formatNoteText(note.content)}</div>
+            <time>${note.timestamp}</time>
+            ${isLong ? `<span class="note-toggle" onclick="toggleNote(${index})" role="button" tabindex="0" aria-label="${note.collapsed ? 'Expand note' : 'Collapse note'}">${note.collapsed ? 'Show more' : 'Show less'}</span>` : ''}
+            <button onclick="deleteNote(${index})" aria-label="Delete note">🗑️</button>
+            <button onclick="editNote(${index})" aria-label="Edit note">✏️ Edit</button>
+          `;
+        }
+        list.appendChild(li);
+      });
+    }
+
+    function deleteNote(index) {
+      deletedNotesStack.push({ note: { ...notes[index] }, index });
+      notes.splice(index, 1);
+      localStorage.setItem('notes', JSON.stringify(notes));
+      showUndoMessage();
+      renderNotes();
+      setTimeout(() => {
+        if (deletedNotesStack.length > 0) {
+          deletedNotesStack.length = 0;
+          hideUndoMessage();
+        }
+      }, 5000);
+    }
+
+    function undoDelete() {
+      if (deletedNotesStack.length === 0) return;
+      const { note, index } = deletedNotesStack.pop();
+      notes.splice(index, 0, note);
+      localStorage.setItem('notes', JSON.stringify(notes));
+      renderNotes();
+      if (deletedNotesStack.length === 0) hideUndoMessage();
+    }
+
+    function showUndoMessage() {
+      const undoDiv = document.getElementById('undoMessage');
+      undoDiv.innerHTML = `Note deleted. <button onclick="undoDelete()" aria-label="Undo note deletion">Undo</button>`;
+      undoDiv.style.display = 'block';
+    }
+
+    function hideUndoMessage() {
+      const undoDiv = document.getElementById('undoMessage');
+      undoDiv.style.display = 'none';
+    }
+
+    function editNote(index) {
+      notes[index].editing = true;
+      localStorage.setItem('notes', JSON.stringify(notes));
+      renderNotes();
+    }
+
+    function cancelNoteEdit(index) {
+      delete notes[index].editing;
+      localStorage.setItem('notes', JSON.stringify(notes));
+      renderNotes();
+    }
+
+    function saveNoteEdit(index) {
+      const textarea = document.getElementById(`editNote${index}`);
+      const newText = textarea.value.trim();
+      if (!newText) {
+        showError('noteError', 'Note content cannot be empty.');
+        return;
+      }
+      notes[index].content = newText;
+      notes[index].timestamp = new Date().toLocaleString();
+      delete notes[index].editing;
+      localStorage.setItem('notes', JSON.stringify(notes));
+      renderNotes();
+    }
+
+    function exportNotes() {
+      const content = notes.map(n => `--- ${n.timestamp} ---\n${n.content}`).join('\n\n');
+      const blob = new Blob([content], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `notes_${getTodayDate()}.txt`;
+      a.click();
+    }
+
+    function exportPlans() {
+      const content = plannedTasks.map(n => `Task: ${n.name}\nCategory: ${n.category}\nDate: ${n.date}\nTime: ${n.time}`).join('\n\n');
+      const blob = new Blob([content], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `plans_${getTodayDate()}.txt`;
+      a.click();
+    }
+
+    // Initialize
+    renderNotes();
+    renderPlannedTasks();
+    renderChecklistTasks();
+    renderTimerTasks();
+    renderAlarmTasks();
+    setInterval(renderTimerTasks, 1000);
+    setInterval(checkAlarms, 60000);
+  </script>
+</body>
+</html>
